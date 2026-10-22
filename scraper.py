@@ -1,8 +1,27 @@
-import json, random, re, time
+from pdf_bigfive import guardar_pdf_bigfive
+
+import json, random, re, time, os
+
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+from google import genai
+from google.genai import types
+
+from google.genai import errors
+
+MODELOS_GEMINI = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]   # el primero es el preferido; el resto, respaldo
+REINTENTOS_POR_MODELO = 4
+
+try:
+    with open("apiKey.txt", "r", encoding="utf-8") as f:
+        api_key_leida = f.read().strip()
+except FileNotFoundError:
+    print("⚠️ Error: No se encontró el archivo 'apiKey.txt' en la carpeta del proyecto.")
+    api_key_leida = ""
+
+client = genai.Client(api_key=api_key_leida)
 
 # ====== CONFIGURA ESTO ======
-USERNAME = "alondra_cgp"   
+USERNAME = "sausage_player"   
 MAX_POSTS = 25
 
 try:
@@ -166,7 +185,73 @@ def obtener_datos_publicacion(page, url):
 
     return datos
 
+MODELO_GEMINI = "gemini-3.5-flash"   # o "gemini-flash-latest" para que siempre apunte al vigente
 
+def analizar_big_five(resultado_perfil):
+    """Envía los datos de Instagram a la API de Gemini para calcular el modelo Big Five."""
+    biografia = resultado_perfil["perfil"].get("biografia", "")
+    posts_textos = [p["texto"] for p in resultado_perfil["publicaciones"] if p["texto"]]
+
+    prompt = f"""
+    Analiza el siguiente perfil de Instagram (biografía y fragmentos de publicaciones) basándote estrictamente en el modelo de personalidad de los Cinco Grandes (Big Five / OCEAN):
+    - Apertura a la experiencia (Openness)
+    - Responsabilidad (Conscientiousness)
+    - Extroversión (Extraversion)
+    - Amabilidad (Agreeableness)
+    - Neuroticismo / Estabilidad emocional (Neuroticism)
+
+    Biografía:
+    {biografia}
+
+    Textos de publicaciones recientes:
+    {json.dumps(posts_textos[:15], ensure_ascii=False)}
+
+    Devuelve la respuesta exclusivamente en formato JSON válido con esta estructura exacta:
+    {{
+      "apertura": {{"puntuacion": 0-100, "analisis": "breve explicación"}},
+      "responsabilidad": {{"puntuacion": 0-100, "analisis": "breve explicación"}},
+      "extroversion": {{"puntuacion": 0-100, "analisis": "breve explicación"}},
+      "amabilidad": {{"puntuacion": 0-100, "analisis": "breve explicación"}},
+      "neuroticismo": {{"puntuacion": 0-100, "analisis": "breve explicación"}},
+      "resumen_psicologico": "Un párrafo describiendo el perfil general de la persona."
+    }}
+    """
+
+    print("\n🧠 Conectando con Gemini para el análisis Big Five...")
+    for modelo in MODELOS_GEMINI:
+        for intento in range(1, REINTENTOS_POR_MODELO + 1):
+            try:
+                response = client.models.generate_content(
+                    model=modelo,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    ),
+                )
+                texto = response.text.strip()
+                texto = re.sub(r"^```(?:json)?|```$", "", texto, flags=re.M).strip()
+                print(f"✅ Respuesta recibida de {modelo}.")
+                return json.loads(texto)
+
+            except errors.APIError as e:
+                # 429 = límite de uso, 500/502/503/504 = problemas temporales del servidor
+                if e.code in (429, 500, 502, 503, 504) and intento < REINTENTOS_POR_MODELO:
+                    espera = (2 ** intento) + random.uniform(0, 1)   # ~2s, 4s, 8s...
+                    print(f"⏳ {modelo} no disponible (error {e.code}). "
+                          f"Reintento {intento}/{REINTENTOS_POR_MODELO - 1} en {espera:.0f}s...")
+                    time.sleep(espera)
+                    continue
+                print(f"⚠️ {modelo} falló ({e.code}). Probando el siguiente modelo...")
+                break   # pasa al siguiente modelo de la lista
+
+            except json.JSONDecodeError as e:
+                print(f"⚠️ {modelo} devolvió un JSON inválido: {e}")
+                break
+
+    print("❌ No se pudo obtener el análisis. Intenta de nuevo en unos minutos.")
+    return None
+
+# ====== EJECUCIÓN PRINCIPAL ======
 with sync_playwright() as p:
     navegador = p.chromium.launch(headless=False)
     context = navegador.new_context(
@@ -177,6 +262,7 @@ with sync_playwright() as p:
     context.add_cookies(convertir_cookies(COOKIES_JSON))
     page = context.new_page()
 
+    print(f"Navegando al perfil de @{USERNAME}...")
     page.goto(f"https://www.instagram.com/{USERNAME}/", wait_until="domcontentloaded")
     pausa(3, 5)
 
@@ -186,26 +272,36 @@ with sync_playwright() as p:
         raise SystemExit
 
     perfil = obtener_perfil(page)
-    print("Perfil:", json.dumps(perfil, ensure_ascii=False, indent=2))
+    print("Perfil extraído correctamente.")
 
     enlaces = recolectar_enlaces(page)
-    print(f"{len(enlaces)} enlaces encontrados. Extrayendo detalles...")
+    print(f"{len(enlaces)} enlaces encontrados. Extrayendo detalles de las publicaciones...")
 
-    # Scrapeo detallado de cada publicación encontrada
     publicaciones_detalladas = []
     for idx, enlace in enumerate(enlaces, 1):
         print(f"Procesando publicación {idx}/{len(enlaces)}: {enlace}")
         detalles = obtener_datos_publicacion(page, enlace)
         publicaciones_detalladas.append(detalles)
-        pausa(1.5, 3) # Pausa preventiva entre peticiones para evitar bloqueos
+        pausa(1.5, 3)
 
     resultado = {
         "perfil": perfil, 
         "publicaciones": publicaciones_detalladas
     }
     
-    with open(f"{USERNAME}_instagram.json", "w", encoding="utf-8") as f:
+    # 1. Guardar el archivo JSON de Instagram
+    nombre_archivo_json = f"{USERNAME}_instagram.json"
+    with open(nombre_archivo_json, "w", encoding="utf-8") as f:
         json.dump(resultado, f, ensure_ascii=False, indent=2)
 
-    print("Listo. Resultados detallados guardados en", f"{USERNAME}_instagram.json")
+    print(f"✅ Scraping completado. Datos guardados en '{nombre_archivo_json}'.")
+
+    # 2. Enviar los datos a la API de Gemini para el análisis Big Five
+    resultado_big_five = analizar_big_five(resultado)
+
+    if resultado_big_five:
+       nombre_archivo_pdf = f"{USERNAME}_bigfive.pdf"
+       guardar_pdf_bigfive(resultado, resultado_big_five, nombre_archivo_pdf)
+       print(f"✅ Informe PDF guardado en '{nombre_archivo_pdf}'.")
+    
     navegador.close()

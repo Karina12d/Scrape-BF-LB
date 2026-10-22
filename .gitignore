@@ -4,6 +4,14 @@ cookies.json
 
 # Resultados de scraping
 alondra_cgp_instagram.json
+sausage_player_instagram.json
+
+# ApiKey
+apiKey.txt
+
+# Resultados de BigFive
+alondra_cgp_bigfive.pdf
+sausage_player_bigfive.pdf
 
 # Entornos virtuales y caché de Python
 venv/
