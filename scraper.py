@@ -1,4 +1,5 @@
 from pdf_bigfive import guardar_pdf_bigfive
+import recolector_seguidores
 
 import json, random, re, time, os
 
@@ -304,4 +305,12 @@ with sync_playwright() as p:
        guardar_pdf_bigfive(resultado, resultado_big_five, nombre_archivo_pdf)
        print(f"✅ Informe PDF guardado en '{nombre_archivo_pdf}'.")
     
+    # 3. Ley de Benford: recolecta seguidores/seguidos reutilizando este mismo navegador
+    print("\n📊 Recolectando seguidores/seguidos para la Ley de Benford...")
+    recolector_seguidores.recolectar_usuarios(page, context, USERNAME)
+
     navegador.close()
+
+# ====== LEY DE BENFORD: conteo, chi-cuadrado y gráfica (fuera del with, sin sangría) ======
+import subprocess, sys
+subprocess.run([sys.executable, "benford.py"], check=True)
