@@ -81,13 +81,6 @@ def p_valor(chi, gl=GL):
     x = chi / 2
     return math.exp(-x) * sum(x ** k / math.factorial(k) for k in range(gl // 2))
 
-
-def densidad_chi(x, gl=GL):
-    """Densidad de chi-cuadrado con gl par: x^(k-1) e^(-x/2) / (2^k (k-1)!), k = gl/2."""
-    k = gl // 2
-    return x ** (k - 1) * math.exp(-x / 2) / (2 ** k * math.factorial(k - 1))
-
-
 def veredicto(chi):
     if chi <= CRITICO_5:
         return "Humano"
@@ -106,67 +99,73 @@ def prueba_chi_cuadrado(conteo):
 
 
 # ---------------------------------------------------------------- gráfica
-def _panel_benford(ax, titulo, conteo, prueba):
-    n = prueba["n"]
+def _figura(titulo, conteo, prueba, cuenta, archivo_png):
+    """UNA sola gráfica: curva de Benford + curva observada (chi-cuadrado) + área de distancia + veredicto."""
+    n, chi, v = prueba["n"], prueba["chi"], prueba["veredicto"]
+    color_v = COLORES[v]
     observado = [100 * conteo[d] / n if n else 0 for d in DIGITOS]
     esperado = [100 * benford(d) for d in DIGITOS]
 
-    barras = ax.bar(DIGITOS, observado, color="#7C3AED", alpha=0.85, label="Observado")
-    ax.plot(DIGITOS, esperado, color="#EF4444", marker="o", linewidth=2, label="Ley de Benford")
-    for barra, d in zip(barras, DIGITOS):
-        ax.text(barra.get_x() + barra.get_width() / 2, barra.get_height() + 0.6,
-                str(conteo[d]), ha="center", va="bottom", fontsize=9, color="#1F2340")
+    fig = plt.figure(figsize=(11.5, 7.6))
+    gs = fig.add_gridspec(2, 1, height_ratios=[5, 1.15], hspace=0.42)
+    ax = fig.add_subplot(gs[0])
+    gauge = fig.add_subplot(gs[1])
 
-    ax.set_title(f"{titulo}: primer dígito (n = {n})", fontsize=13, fontweight="bold")
-    ax.set_xlabel("Primer dígito")
-    ax.set_ylabel("Frecuencia (%)")
+    # --- dos curvas: Benford (roja) y observada/chi-cuadrado (verde); el área rayada entre ambas es la distancia
+    xs = list(DIGITOS)
+    ax.fill_between(xs, observado, esperado, interpolate=True, facecolor="#3B4FD8", alpha=0.22,
+                    hatch="///", edgecolor="#3B4FD8", linewidth=0, label="Distancia (área entre curvas)")
+    ax.plot(xs, esperado, color="#EF4444", marker="o", linewidth=2.8, markersize=7,
+            label="Ley de Benford (esperado)", zorder=3)
+    ax.plot(xs, observado, color="#84B30F", marker="o", linewidth=2.8, markersize=7,
+            label="Observado – chi-cuadrado", zorder=4)
+    for d in DIGITOS:
+        ax.text(d, max(observado[d - 1], esperado[d - 1]) + 1.0, str(conteo[d]), ha="center", va="bottom",
+                fontsize=10, color="#1F2340", fontweight="bold")
+
     ax.set_xticks(list(DIGITOS))
-    ax.set_ylim(0, max(max(observado), max(esperado)) + 8)
-    ax.grid(axis="y", alpha=0.3)
-    ax.legend()
+    ax.set_xticklabels([f"{d}\nχ²ᵢ = {prueba['contrib'][d]:.2f}" for d in DIGITOS], fontsize=9)
+    ax.set_xlabel("Primer dígito   (χ²ᵢ = (O − E)² / E: aporte de cada dígito a la distancia)")
+    ax.set_ylabel("Frecuencia (%)")
+    ax.set_ylim(0, max(max(observado), max(esperado)) + 12)
+    ax.grid(alpha=0.3)
+    ax.legend(loc="upper center", ncol=3, frameon=True, fontsize=9.5)
+    ax.set_title(f"Ley de Benford y chi-cuadrado – {titulo} de los usuarios de @{cuenta} (n = {n})",
+                 fontsize=13, fontweight="bold")
 
+    resumen = (f"Distancia χ² = Σ(O−E)²/E = {chi:.2f}\n"
+               f"gl = {GL}   p-valor = {prueba['p']:.4f}\n"
+               f"RESULTADO: {v.upper()}")
+    ax.text(0.985, 0.80, resumen, transform=ax.transAxes, ha="right", va="top", fontsize=11,
+            fontweight="bold", color=color_v, bbox=dict(boxstyle="round,pad=0.5", fc="white", ec=color_v, lw=2))
 
-def _panel_chi(ax, prueba):
-    chi, v = prueba["chi"], prueba["veredicto"]
-    xmax = 35 if chi > 35 else max(30, chi * 1.25)   # si χ² es enorme, se limita la escala
+    # --- escala de decisión: dónde cae la distancia χ²
+    xmax = 35 if chi > 35 else max(30, chi * 1.25)
     fuera = chi > xmax
     x_marca = xmax * 0.97 if fuera else chi
-    xs = [i * xmax / 400 for i in range(1, 401)]
-    ys = [densidad_chi(x) for x in xs]
+    gauge.axvspan(0, CRITICO_5, color=COLORES["Humano"], alpha=0.35)
+    gauge.axvspan(CRITICO_5, CRITICO_1, color=COLORES["Posible bot"], alpha=0.45)
+    gauge.axvspan(CRITICO_1, xmax, color=COLORES["Bot"], alpha=0.35)
+    gauge.text(CRITICO_5 / 2, 0.5, f"HUMANO\n(χ² ≤ {CRITICO_5})", ha="center", va="center", fontsize=9)
+    gauge.text((CRITICO_5 + CRITICO_1) / 2, 0.5, "POSIBLE\nBOT", ha="center", va="center", fontsize=8)
+    gauge.text((CRITICO_1 + xmax) / 2, 0.5, f"BOT (χ² > {CRITICO_1})", ha="center", va="center", fontsize=9)
+    gauge.axvline(x_marca, color=color_v, linewidth=4)
+    gauge.annotate(f"χ² = {chi:.2f}" + (" →" if fuera else ""), xy=(x_marca, 1.0), xytext=(0, 6),
+                   textcoords="offset points", ha="center", va="bottom", fontsize=10,
+                   fontweight="bold", color=color_v, annotation_clip=False)
+    gauge.set_xlim(0, xmax)
+    gauge.set_ylim(0, 1)
+    gauge.set_yticks([])
+    gauge.set_xlabel("Escala de decisión según la distancia χ² (8 grados de libertad)")
 
-    ax.plot(xs, ys, color="#1F2340", linewidth=2)
-    ax.fill_between(xs, ys, where=[x <= CRITICO_5 for x in xs], color=COLORES["Humano"], alpha=0.30,
-                    label=f"Humano (χ² ≤ {CRITICO_5})")
-    ax.fill_between(xs, ys, where=[CRITICO_5 < x <= CRITICO_1 for x in xs], color=COLORES["Posible bot"],
-                    alpha=0.35, label=f"Posible bot ({CRITICO_5} < χ² ≤ {CRITICO_1})")
-    ax.fill_between(xs, ys, where=[x > CRITICO_1 for x in xs], color=COLORES["Bot"], alpha=0.35,
-                    label=f"Bot (χ² > {CRITICO_1})")
-    ax.axvline(x_marca, color=COLORES[v], linewidth=3)
-    ax.annotate(f"χ² = {chi:.2f}{' (fuera de escala →)' if fuera else ''}\np = {prueba['p']:.4f}\n{v.upper()}",
-                xy=(x_marca, max(ys) * 0.55), xytext=(-8 if x_marca > xmax * 0.6 else 8, 0),
-                textcoords="offset points",
-                ha="right" if x_marca > xmax * 0.6 else "left", fontsize=11, fontweight="bold",
-                color=COLORES[v], bbox=dict(boxstyle="round", fc="white", ec=COLORES[v]))
-
-    ax.set_title(f"Curva chi-cuadrado ({GL} grados de libertad)", fontsize=13, fontweight="bold")
-    ax.set_xlabel("χ²")
-    ax.set_ylabel("Densidad")
-    ax.set_xlim(0, xmax)
-    ax.grid(alpha=0.3)
-    ax.legend(fontsize=9)
+    fig.savefig(archivo_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
 
 def graficar(resultados, cuenta, archivo_png):
-    filas = len(resultados)
-    fig, ejes = plt.subplots(filas, 2, figsize=(14, 5.4 * filas), squeeze=False)
-    for fila, (titulo, conteo, prueba) in zip(ejes, resultados):
-        _panel_benford(fila[0], titulo, conteo, prueba)
-        _panel_chi(fila[1], prueba)
-
-    fig.suptitle(f"Ley de Benford y chi-cuadrado – usuarios de @{cuenta}", fontsize=15, fontweight="bold")
-    fig.tight_layout()
-    fig.savefig(archivo_png, dpi=150)
-    plt.close(fig)
+    for i, (titulo, conteo, prueba) in enumerate(resultados):
+        destino = archivo_png if i == 0 else archivo_png.replace(".png", f"_{titulo.lower()}.png")
+        _figura(titulo, conteo, prueba, cuenta, destino)
 
 
 # ---------------------------------------------------------------- Excel (misma hoja)
