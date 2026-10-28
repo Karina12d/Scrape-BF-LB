@@ -1,7 +1,7 @@
 from pdf_bigfive import guardar_pdf_bigfive
 import recolector_seguidores
 
-import json, random, re, time, os
+import json, random, re, time
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 from google import genai
@@ -9,7 +9,7 @@ from google.genai import types
 
 from google.genai import errors
 
-MODELOS_GEMINI = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]   # el primero es el preferido; el resto, respaldo
+MODELOS_GEMINI = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]   
 REINTENTOS_POR_MODELO = 4
 
 try:
@@ -93,7 +93,7 @@ def obtener_perfil(page):
 
 
 def recolectar_enlaces(page):
-    enlaces = {}   # clave: código de la publicación, evita duplicados
+    enlaces = {}   
     sin_nuevos = 0
     while len(enlaces) < MAX_POSTS and sin_nuevos < 10:
         hrefs = page.eval_on_selector_all(
@@ -107,9 +107,9 @@ def recolectar_enlaces(page):
 
         sin_nuevos = sin_nuevos + 1 if len(enlaces) == antes else 0
         if sin_nuevos >= 3:
-            page.mouse.wheel(0, -600)   # sube un poco para forzar que cargue más
+            page.mouse.wheel(0, -600)   
             pausa(1, 2)
-        page.mouse.wheel(0, random.randint(900, 1400))   # scroll más corto
+        page.mouse.wheel(0, random.randint(900, 1400))   
         pausa(1.5, 3)
     return list(enlaces.values())[:MAX_POSTS]
 
@@ -128,7 +128,6 @@ def obtener_datos_publicacion(page, url):
         page.goto(url, wait_until="domcontentloaded", timeout=15000)
         pausa(2, 4)
 
-        # 1. Obtener la metaetiqueta og:description
         contenido_meta = ""
         try:
             meta_desc = page.locator('meta[property="og:description"]')
@@ -186,7 +185,7 @@ def obtener_datos_publicacion(page, url):
 
     return datos
 
-MODELO_GEMINI = "gemini-3.5-flash"   # o "gemini-flash-latest" para que siempre apunte al vigente
+MODELO_GEMINI = "gemini-3.5-flash"   
 
 def analizar_big_five(resultado_perfil):
     """Envía los datos de Instagram a la API de Gemini para calcular el modelo Big Five."""
@@ -289,28 +288,24 @@ with sync_playwright() as p:
         "perfil": perfil, 
         "publicaciones": publicaciones_detalladas
     }
-    
-    # 1. Guardar el archivo JSON de Instagram
+
     nombre_archivo_json = f"{USERNAME}_instagram.json"
     with open(nombre_archivo_json, "w", encoding="utf-8") as f:
         json.dump(resultado, f, ensure_ascii=False, indent=2)
 
     print(f"✅ Scraping completado. Datos guardados en '{nombre_archivo_json}'.")
-
-    # 2. Enviar los datos a la API de Gemini para el análisis Big Five
     resultado_big_five = analizar_big_five(resultado)
 
     if resultado_big_five:
        nombre_archivo_pdf = f"{USERNAME}_bigfive.pdf"
        guardar_pdf_bigfive(resultado, resultado_big_five, nombre_archivo_pdf)
        print(f"✅ Informe PDF guardado en '{nombre_archivo_pdf}'.")
-    
-    # 3. Ley de Benford: recolecta seguidores/seguidos reutilizando este mismo navegador
+
     print("\n📊 Recolectando seguidores/seguidos para la Ley de Benford...")
-    recolector_seguidores.recolectar_usuarios(page, context, USERNAME)
+    recolector_seguidores.recolectar_usuarios(page, USERNAME)
 
     navegador.close()
 
-# ====== LEY DE BENFORD: conteo, chi-cuadrado y gráfica (fuera del with, sin sangría) ======
+# ====== LEY DE BENFORD ======
 import subprocess, sys
 subprocess.run([sys.executable, "benford.py"], check=True)
