@@ -24,43 +24,15 @@ def parsear_cantidad(texto):
     if not m:
         return None
     numero, sufijo = m.groups()
-    if sufijo:                                    # con sufijo, el separador es decimal
-        valor = float(numero.replace(",", "."))
-        return int(round(valor * {"mil": 1e3, "k": 1e3, "m": 1e6}[sufijo]))
-    return int(re.sub(r"[.,]", "", numero))       # sin sufijo, los separadores son de miles
+    if sufijo:   # con sufijo el separador es decimal; sin sufijo, de miles
+        return round(float(numero.replace(",", ".")) * {"mil": 1e3, "k": 1e3, "m": 1e6}[sufijo])
+    return int(re.sub(r"[.,]", "", numero))
 
 
-def primer_digito(valor):
-    """Primer dígito significativo (1-9); None si el valor es 0 o no existe."""
-    if not valor:
-        return None
-    return int(str(abs(valor))[0])
-
-
-def contar_primeros_digitos(valores):
-    conteo = Counter(d for d in map(primer_digito, valores) if d)
-    return {d: conteo.get(d, 0) for d in DIGITOS}
-
-
-def benford(d):
-    return math.log10(1 + 1 / d)
-
-
-# ---------------------------------------------------------------- chi-cuadrado
-def p_valor(chi, gl=GL):
-    """P(X >= chi) para chi-cuadrado con gl PAR (forma cerrada, sin scipy)."""
-    x = chi / 2
-    return math.exp(-x) * sum(x ** k / math.factorial(k) for k in range(gl // 2))
-
-def veredicto(chi):
-    if chi <= CRITICO_5:
-        return "Humano"
-    if chi <= CRITICO_1:
-        return "Posible bot"
-    return "Bot"
-
-
-def prueba_chi_cuadrado(conteo):
+def analizar(valores):
+    """Conteo del primer dígito (los ceros se ignoran) y chi-cuadrado contra Benford."""
+    c = Counter(int(str(v)[0]) for v in valores if v)
+    conteo = {d: c[d] for d in D}
     n = sum(conteo.values())
     esp = {d: n * benford(d) for d in D}
     contrib = {d: (conteo[d] - esp[d]) ** 2 / esp[d] for d in D}
@@ -71,79 +43,51 @@ def prueba_chi_cuadrado(conteo):
     return {"conteo": conteo, "n": n, "esp": esp, "contrib": contrib, "chi": chi, "p": p, "veredicto": v}
 
 
-# ---------------------------------------------------------------- gráfica
-def _figura(titulo, conteo, prueba, cuenta, archivo_png):
-    """UNA sola gráfica: curva de Benford + curva observada (chi-cuadrado) + área de distancia + veredicto."""
-    n, chi, v = prueba["n"], prueba["chi"], prueba["veredicto"]
-    color_v = COLORES[v]
-    observado = [100 * conteo[d] / n if n else 0 for d in DIGITOS]
-    esperado = [100 * benford(d) for d in DIGITOS]
-
+def graficar(r, cuenta, archivo_png):
+    """Una sola gráfica: barras observadas + curva de Benford + curva observada + área de distancia."""
+    n, chi, v, conteo = r["n"], r["chi"], r["veredicto"], r["conteo"]
+    xs = list(D)
+    obs = [100 * conteo[d] / n for d in xs]
+    esp = [100 * benford(d) for d in xs]
     fig = plt.figure(figsize=(11.5, 7.6))
-    gs = fig.add_gridspec(2, 1, height_ratios=[5, 1.15], hspace=0.42)
-    ax = fig.add_subplot(gs[0])
-    gauge = fig.add_subplot(gs[1])
+    ax, escala = fig.add_gridspec(2, 1, height_ratios=[5, 1.15], hspace=0.42).subplots()
 
-    # --- dos curvas: Benford (roja) y observada/chi-cuadrado (verde); el área rayada entre ambas es la distancia
-    xs = list(DIGITOS)
-    ax.fill_between(xs, observado, esperado, interpolate=True, facecolor="#3B4FD8", alpha=0.22,
-                    hatch="///", edgecolor="#3B4FD8", linewidth=0, label="Distancia (área entre curvas)")
-    ax.plot(xs, esperado, color="#EF4444", marker="o", linewidth=2.8, markersize=7,
-            label="Ley de Benford (esperado)", zorder=3)
-    ax.plot(xs, observado, color="#84B30F", marker="o", linewidth=2.8, markersize=7,
-            label="Observado – chi-cuadrado", zorder=4)
-    for d in DIGITOS:
-        ax.text(d, max(observado[d - 1], esperado[d - 1]) + 1.0, str(conteo[d]), ha="center", va="bottom",
-                fontsize=10, color="#1F2340", fontweight="bold")
-
-    ax.set_xticks(list(DIGITOS))
-    ax.set_xticklabels([f"{d}\nχ²ᵢ = {prueba['contrib'][d]:.2f}" for d in DIGITOS], fontsize=9)
-    ax.set_xlabel("Primer dígito   (χ²ᵢ = (O − E)² / E: aporte de cada dígito a la distancia)")
-    ax.set_ylabel("Frecuencia (%)")
-    ax.set_ylim(0, max(max(observado), max(esperado)) + 12)
+    ax.bar(xs, obs, width=0.7, color="#FACC15", alpha=0.9, label="Observado (barras)", zorder=1)
+    ax.fill_between(xs, obs, esp, interpolate=True, facecolor="#3B4FD8", alpha=0.22, hatch="///",
+                    edgecolor="#3B4FD8", linewidth=0, label="Distancia (área entre curvas)")
+    ax.plot(xs, esp, "o-", color="#EF4444", linewidth=2.8, markersize=7, label="Ley de Benford (esperado)", zorder=3)
+    ax.plot(xs, obs, "o-", color="#84B30F", linewidth=2.8, markersize=7, label="Observado – chi-cuadrado", zorder=4)
+    for d, o, e in zip(xs, obs, esp):
+        ax.text(d, max(o, e) + 1, conteo[d], ha="center", fontsize=10, fontweight="bold", color="#1F2340")
+    ax.set(xticks=xs, ylim=(0, max(obs + esp) + 14), ylabel="Frecuencia (%)",
+           xticklabels=[f"{d}\nχ²ᵢ = {r['contrib'][d]:.2f}" for d in xs],
+           xlabel="Primer dígito   (χ²ᵢ = (O − E)² / E: aporte de cada dígito a la distancia)",
+           title=f"Ley de Benford y chi-cuadrado – {CAMPO} de los usuarios de @{cuenta} (n = {n})")
+    ax.title.set(fontsize=13, fontweight="bold")
     ax.grid(alpha=0.3)
-    ax.legend(loc="upper center", ncol=3, frameon=True, fontsize=9.5)
-    ax.set_title(f"Ley de Benford y chi-cuadrado – {titulo} de los usuarios de @{cuenta} (n = {n})",
-                 fontsize=13, fontweight="bold")
+    ax.legend(loc="upper center", ncol=2, fontsize=9.5)
+    ax.text(0.985, 0.80, f"Distancia χ² = Σ(O−E)²/E = {chi:.2f}\ngl = {GL}   p-valor = {r['p']:.4f}\n"
+            f"RESULTADO: {v.upper()}", transform=ax.transAxes, ha="right", va="top", fontsize=11,
+            fontweight="bold", color=COLORES[v], bbox=dict(boxstyle="round,pad=0.5", fc="white", ec=COLORES[v], lw=2))
 
-    resumen = (f"Distancia χ² = Σ(O−E)²/E = {chi:.2f}\n"
-               f"gl = {GL}   p-valor = {prueba['p']:.4f}\n"
-               f"RESULTADO: {v.upper()}")
-    ax.text(0.985, 0.80, resumen, transform=ax.transAxes, ha="right", va="top", fontsize=11,
-            fontweight="bold", color=color_v, bbox=dict(boxstyle="round,pad=0.5", fc="white", ec=color_v, lw=2))
-
-    # --- escala de decisión: dónde cae la distancia χ²
-    xmax = 35 if chi > 35 else max(30, chi * 1.25)
-    fuera = chi > xmax
-    x_marca = xmax * 0.97 if fuera else chi
-    gauge.axvspan(0, CRITICO_5, color=COLORES["Humano"], alpha=0.35)
-    gauge.axvspan(CRITICO_5, CRITICO_1, color=COLORES["Posible bot"], alpha=0.45)
-    gauge.axvspan(CRITICO_1, xmax, color=COLORES["Bot"], alpha=0.35)
-    gauge.text(CRITICO_5 / 2, 0.5, f"HUMANO\n(χ² ≤ {CRITICO_5})", ha="center", va="center", fontsize=9)
-    gauge.text((CRITICO_5 + CRITICO_1) / 2, 0.5, "POSIBLE\nBOT", ha="center", va="center", fontsize=8)
-    gauge.text((CRITICO_1 + xmax) / 2, 0.5, f"BOT (χ² > {CRITICO_1})", ha="center", va="center", fontsize=9)
-    gauge.axvline(x_marca, color=color_v, linewidth=4)
-    gauge.annotate(f"χ² = {chi:.2f}" + (" →" if fuera else ""), xy=(x_marca, 1.0), xytext=(0, 6),
-                   textcoords="offset points", ha="center", va="bottom", fontsize=10,
-                   fontweight="bold", color=color_v, annotation_clip=False)
-    gauge.set_xlim(0, xmax)
-    gauge.set_ylim(0, 1)
-    gauge.set_yticks([])
-    gauge.set_xlabel("Escala de decisión según la distancia χ² (8 grados de libertad)")
-
+    # escala de decisión: dónde cae la distancia χ²
+    for ini, fin, z in ((0, CRITICO_5, "Humano"), (CRITICO_5, CRITICO_1, "Posible bot"), (CRITICO_1, 35, "Bot")):
+        escala.axvspan(ini, fin, color=COLORES[z], alpha=0.35)
+        escala.text((ini + fin) / 2, 0.5, z.upper(), ha="center", va="center", fontsize=9)
+    x = min(chi, 34)
+    escala.axvline(x, color=COLORES[v], linewidth=4)
+    escala.annotate(f"χ² = {chi:.2f}", (x, 1), (0, 6), textcoords="offset points", ha="center",
+                    fontsize=10, fontweight="bold", color=COLORES[v], annotation_clip=False)
+    escala.set(xlim=(0, 35), ylim=(0, 1), yticks=[], xlabel=f"Escala de decisión según la distancia χ² ({GL} grados de libertad)")
     fig.savefig(archivo_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
-def graficar(resultados, cuenta, archivo_png):
-    for i, (titulo, conteo, prueba) in enumerate(resultados):
-        destino = archivo_png if i == 0 else archivo_png.replace(".png", f"_{titulo.lower()}.png")
-        _figura(titulo, conteo, prueba, cuenta, destino)
+def guardar_en_excel(archivo_json, r):
+    """Escribe el conteo y el chi-cuadrado en la MISMA hoja del Excel, desde la columna E."""
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font, PatternFill
 
-
-# ---------------------------------------------------------------- Excel (misma hoja)
-def guardar_en_excel(archivo_json, resultados):
-    """Agrega conteo, chi-cuadrado y veredicto en la misma hoja del Excel (a la derecha de los datos)."""
     ruta = re.sub(r"\.json$", ".xlsx", archivo_json)
     try:
         wb = load_workbook(ruta)
