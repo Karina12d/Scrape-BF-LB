@@ -11,7 +11,11 @@ apiKey.txt
 
 # Resultados de BigFive
 alondra_cgp_bigfive.pdf
-sausage_player_bigfive.pdf
+sausage_player_bigfive.pdf}
+
+# Resultados Benford
+sausage_player_usuarios_200.json
+sausage_player_usuarios_200.xlsx
 
 # Entornos virtuales y caché de Python
 venv/
